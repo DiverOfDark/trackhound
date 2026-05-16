@@ -8,14 +8,16 @@ pub struct OpenAiClassifier {
     http: Client,
     api_key: String,
     model: String,
+    openai_url: String,
 }
 
 impl OpenAiClassifier {
-    pub fn new(api_key: String, model: String) -> Self {
+    pub fn new(api_key: String, model: String, openai_url: String) -> Self {
         Self {
             http: Client::new(),
             api_key,
             model,
+            openai_url,
         }
     }
 
@@ -38,7 +40,7 @@ impl OpenAiClassifier {
         });
         let value: Value = self
             .http
-            .post("https://api.openai.com/v1/chat/completions")
+            .post(&self.openai_url)
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
@@ -85,5 +87,45 @@ mod tests {
         let r = parse_extraction_json(r#"{"shipments":[{"kind":"tracking","tracking_number":"RR123DE","order_number":null,"carrier":"DHL","merchant":null,"status":"in_transit","expected_delivery_date":"2026-05-17","title":null,"confidence":0.98,"reason":"labeled tracking"}]}"#).unwrap();
         assert_eq!(r.shipments.len(), 1);
         assert_eq!(r.shipments[0].tracking_number.as_deref(), Some("RR123DE"));
+    }
+
+    #[tokio::test]
+    async fn classifier_posts_to_custom_openai_url() {
+        let server = httpmock::MockServer::start_async().await;
+        let mock = server
+            .mock_async(|when, then| {
+                when.method(httpmock::Method::POST)
+                    .path("/custom/v1/chat/completions")
+                    .header("authorization", "Bearer test-key");
+                then.status(200).json_body(json!({
+                    "choices": [{
+                        "message": {
+                            "content": "{\"shipments\":[]}"
+                        }
+                    }]
+                }));
+            })
+            .await;
+        let classifier = OpenAiClassifier::new(
+            "test-key".to_string(),
+            "test-model".to_string(),
+            format!("{}/custom/v1/chat/completions", server.base_url()),
+        );
+
+        let result = classifier
+            .classify(&EmailMessage {
+                id: "1".to_string(),
+                thread_id: "t1".to_string(),
+                subject: "Shipment".to_string(),
+                from_addr: "shop@example.com".to_string(),
+                snippet: "Your package shipped".to_string(),
+                body_text: "Tracking soon".to_string(),
+                internal_date_ms: 0,
+            })
+            .await
+            .unwrap();
+
+        assert!(result.shipments.is_empty());
+        mock.assert_async().await;
     }
 }

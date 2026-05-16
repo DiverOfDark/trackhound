@@ -34,6 +34,7 @@ config:
   track17SyncIntervalSeconds: 3600
   gmailQuery: "newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)"
   openaiModel: gpt-4.1-nano
+  openaiUrl: https://api.openai.com/v1/chat/completions
   gmailImapHost: imap.gmail.com
   gmailImapPort: 993
   gmailImapUsername: ""
