@@ -1,7 +1,8 @@
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
-#[derive(Debug, Serialize, sqlx::FromRow)]
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
 pub struct ShipmentRow {
     pub id: String,
     pub tracking_number: Option<String>,
@@ -36,7 +37,7 @@ pub struct EmailMessage {
     pub internal_date_ms: i64,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ExtractedKind {
     Tracking,
@@ -45,7 +46,7 @@ pub enum ExtractedKind {
     Ignore,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ExtractedShipment {
     pub kind: ExtractedKind,
     pub tracking_number: Option<String>,
@@ -59,12 +60,12 @@ pub struct ExtractedShipment {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, ToSchema)]
 pub struct ExtractionResult {
     pub shipments: Vec<ExtractedShipment>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct ScanSummary {
     pub messages_seen: usize,
     pub messages_processed: usize,
@@ -73,13 +74,13 @@ pub struct ScanSummary {
     pub registered_in_17track: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct SyncSummary {
     pub checked: usize,
     pub updated: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
 pub struct Health {
     pub ok: bool,
 }

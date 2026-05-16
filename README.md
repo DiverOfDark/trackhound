@@ -49,6 +49,13 @@ TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
 
 ## API
 
+Interactive Scalar API documentation is served at:
+
+- `GET /api-docs`
+- `GET /api-docs/openapi.json` — raw OpenAPI document
+
+Endpoints:
+
 - `GET /healthz`
 - `GET /shipments`
 - `GET /shipments/today`
