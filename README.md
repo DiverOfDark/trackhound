@@ -1,10 +1,11 @@
 # Trackhound
 
-Trackhound is a small Rust service that watches Gmail for parcel/shipment emails, uses an OpenAI classifier to extract tracking/order data, registers real tracking numbers in 17TRACK, stores everything in SQLite, and exposes a simple HTTP API.
+Trackhound is a small Rust service that watches Gmail via IMAP with a Google App Password, uses an OpenAI classifier to extract tracking/order data, registers real tracking numbers in 17TRACK, stores everything in SQLite, and exposes a simple HTTP API.
 
 ## Features
 
-- Gmail API OAuth refresh-token flow; scans every 30 minutes by default.
+- Gmail IMAP app-password flow; scans every 30 minutes by default.
+- Uses Gmail's `X-GM-RAW` IMAP extension, so `TRACKHOUND_GMAIL_QUERY` supports Gmail search operators such as `newer_than:14d`.
 - OpenAI structured JSON extraction from full email snippets.
 - 17TRACK v1 API registration and hourly status sync.
 - Amazon support: stores Amazon order numbers locally even when no tracking number is present.
@@ -33,17 +34,23 @@ TRACKHOUND_TRACK17_SYNC_INTERVAL_SECONDS=3600
 TRACKHOUND_GMAIL_QUERY='newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)'
 TRACKHOUND_OPENAI_MODEL=gpt-4.1-nano
 OPENAI_API_KEY=...
-GMAIL_CLIENT_ID=...
-GMAIL_CLIENT_SECRET=...
-GMAIL_REFRESH_TOKEN=...
+GMAIL_IMAP_HOST=imap.gmail.com
+GMAIL_IMAP_PORT=993
+GMAIL_IMAP_USERNAME=you@gmail.com
+GMAIL_IMAP_PASSWORD='google-app-password-without-spaces'
+GMAIL_IMAP_MAILBOX=INBOX
 TRACK17_SECURITY_KEY=...
 ```
 
-You can also mount the same OAuth values from the Gmail `credentials.json` / `token.json` files into env vars. For local development on Kirill's Hermes box:
+Create a Google App Password for the mailbox account and use that value as `GMAIL_IMAP_PASSWORD`. OAuth credentials are not used.
+
+For local development on Kirill's Hermes box:
 
 ```bash
 eval "$(python3 scripts/hermes-secrets-to-env.py)"
 export OPENAI_API_KEY=...
+export GMAIL_IMAP_USERNAME=you@gmail.com
+export GMAIL_IMAP_PASSWORD='google-app-password-without-spaces'
 TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
 ```
 
@@ -76,9 +83,8 @@ TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
 helm upgrade --install trackhound ./charts/trackhound \
   --namespace trackhound --create-namespace \
   --set secrets.openaiApiKey='...' \
-  --set secrets.gmailClientId='...' \
-  --set secrets.gmailClientSecret='...' \
-  --set secrets.gmailRefreshToken='...' \
+  --set config.gmailImapUsername='you@gmail.com' \
+  --set secrets.gmailImapPassword='google-app-password' \
   --set secrets.track17SecurityKey='...'
 ```
 
@@ -104,15 +110,9 @@ additionalObjects:
         - secretKey: OPENAI_API_KEY
           remoteRef:
             key: trackhound/openai-api-key
-        - secretKey: GMAIL_CLIENT_ID
+        - secretKey: GMAIL_IMAP_PASSWORD
           remoteRef:
-            key: trackhound/gmail-client-id
-        - secretKey: GMAIL_CLIENT_SECRET
-          remoteRef:
-            key: trackhound/gmail-client-secret
-        - secretKey: GMAIL_REFRESH_TOKEN
-          remoteRef:
-            key: trackhound/gmail-refresh-token
+            key: trackhound/gmail-imap-password
         - secretKey: TRACK17_SECURITY_KEY
           remoteRef:
             key: trackhound/track17-security-key

@@ -32,16 +32,18 @@ spec:
               value: {{ .Values.config.gmailQuery | quote }}
             - name: TRACKHOUND_OPENAI_MODEL
               value: {{ .Values.config.openaiModel | quote }}
-            - name: GMAIL_TOKEN_URI
-              value: {{ .Values.config.gmailTokenUri | quote }}
+            - name: GMAIL_IMAP_HOST
+              value: {{ .Values.config.gmailImapHost | quote }}
+            - name: GMAIL_IMAP_PORT
+              value: {{ .Values.config.gmailImapPort | quote }}
+            - name: GMAIL_IMAP_USERNAME
+              value: {{ .Values.config.gmailImapUsername | quote }}
+            - name: GMAIL_IMAP_MAILBOX
+              value: {{ .Values.config.gmailImapMailbox | quote }}
             - name: OPENAI_API_KEY
               valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: OPENAI_API_KEY } }
-            - name: GMAIL_CLIENT_ID
-              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_CLIENT_ID } }
-            - name: GMAIL_CLIENT_SECRET
-              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_CLIENT_SECRET } }
-            - name: GMAIL_REFRESH_TOKEN
-              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_REFRESH_TOKEN } }
+            - name: GMAIL_IMAP_PASSWORD
+              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_IMAP_PASSWORD } }
             - name: TRACK17_SECURITY_KEY
               valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: TRACK17_SECURITY_KEY } }
           ports:
