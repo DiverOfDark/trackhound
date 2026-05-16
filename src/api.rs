@@ -45,8 +45,8 @@ struct ApiDoc;
 
 pub fn router(state: Arc<AppState>) -> Router {
     Router::new()
-        .route("/api-docs", get(scalar_ui))
-        .route("/api-docs/openapi.json", get(openapi_json))
+        .route("/", get(scalar_ui))
+        .route("/openapi.json", get(openapi_json))
         .route("/healthz", get(healthz))
         .route("/shipments", get(list_shipments))
         .route("/shipments/today", get(today))
@@ -230,7 +230,7 @@ const SCALAR_UI: &str = r#"<!doctype html>
   <body>
     <script
       id="api-reference"
-      data-url="/api-docs/openapi.json"
+      data-url="/openapi.json"
       data-theme="purple"
     ></script>
     <script
