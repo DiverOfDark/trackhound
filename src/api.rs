@@ -34,9 +34,10 @@ use utoipa::OpenApi;
 struct ApiDoc;
 
 pub fn router(state: Arc<AppState>) -> Router {
+    let openapi_url = state.openapi_url.clone();
     Router::new()
         .route("/api-docs", get(scalar_ui))
-        .route("/api-docs/openapi.json", get(openapi_json))
+        .route(&openapi_url, get(openapi_json))
         .route("/healthz", get(healthz))
         .route("/shipments", get(list_shipments))
         .route("/shipments/today", get(today))
@@ -48,8 +49,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-async fn scalar_ui() -> Html<&'static str> {
-    Html(SCALAR_UI)
+async fn scalar_ui(State(state): State<Arc<AppState>>) -> Html<String> {
+    Html(render_scalar_ui(&state.openapi_url))
 }
 
 async fn openapi_json() -> Json<utoipa::openapi::OpenApi> {
@@ -160,7 +161,11 @@ fn err(e: anyhow::Error) -> axum::response::Response {
     (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
 }
 
-const SCALAR_UI: &str = r#"<!doctype html>
+fn render_scalar_ui(openapi_url: &str) -> String {
+    SCALAR_UI_TEMPLATE.replace("__OPENAPI_URL__", openapi_url)
+}
+
+const SCALAR_UI_TEMPLATE: &str = r#"<!doctype html>
 <html>
   <head>
     <title>Trackhound API Docs</title>
@@ -174,7 +179,7 @@ const SCALAR_UI: &str = r#"<!doctype html>
   <body>
     <script
       id="api-reference"
-      data-url="/api-docs/openapi.json"
+      data-url="__OPENAPI_URL__"
       data-theme="purple"
     ></script>
     <script
@@ -185,3 +190,16 @@ const SCALAR_UI: &str = r#"<!doctype html>
   </body>
 </html>
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scalar_ui_uses_configured_openapi_url() {
+        let html = render_scalar_ui("/custom/openapi.json");
+
+        assert!(html.contains("data-url=\"/custom/openapi.json\""));
+        assert!(!html.contains("/api-docs/openapi.json"));
+    }
+}

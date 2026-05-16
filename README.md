@@ -32,6 +32,7 @@ TRACKHOUND_BIND_ADDR=0.0.0.0:8080
 TRACKHOUND_GMAIL_SCAN_INTERVAL_SECONDS=1800
 TRACKHOUND_TRACK17_SYNC_INTERVAL_SECONDS=3600
 TRACKHOUND_GMAIL_QUERY='newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)'
+TRACKHOUND_OPENAPI_URL=/api-docs/openapi.json
 TRACKHOUND_OPENAI_MODEL=gpt-4.1-nano
 OPENAI_API_KEY=...
 GMAIL_IMAP_HOST=imap.gmail.com
@@ -49,7 +50,7 @@ Create a Google App Password for the mailbox account and use that value as `GMAI
 Interactive Scalar API documentation is served at:
 
 - `GET /api-docs`
-- `GET /api-docs/openapi.json` — raw OpenAPI document
+- `GET $TRACKHOUND_OPENAPI_URL` — raw OpenAPI document; defaults to `/api-docs/openapi.json`
 
 Endpoints:
 
@@ -73,6 +74,7 @@ TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
 helm upgrade --install trackhound ./charts/trackhound \
   --namespace trackhound --create-namespace \
   --set secrets.openaiApiKey='...' \
+  --set config.openapiUrl='/api-docs/openapi.json' \
   --set config.gmailImapUsername='you@gmail.com' \
   --set secrets.gmailImapPassword='google-app-password' \
   --set secrets.track17SecurityKey='...'

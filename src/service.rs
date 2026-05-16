@@ -14,6 +14,7 @@ pub struct AppState {
     pub classifier: OpenAiClassifier,
     pub track17: Track17Client,
     pub gmail_query: String,
+    pub openapi_url: String,
 }
 
 impl AppState {
