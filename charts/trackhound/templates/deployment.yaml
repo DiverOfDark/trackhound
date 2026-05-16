@@ -32,6 +32,8 @@ spec:
               value: {{ .Values.config.gmailQuery | quote }}
             - name: TRACKHOUND_OPENAI_MODEL
               value: {{ .Values.config.openaiModel | quote }}
+            - name: TRACKHOUND_OPENAI_URL
+              value: {{ .Values.config.openaiUrl | quote }}
             - name: GMAIL_IMAP_HOST
               value: {{ .Values.config.gmailImapHost | quote }}
             - name: GMAIL_IMAP_PORT
@@ -57,12 +59,12 @@ spec:
             - name: data
               mountPath: /data
           resources:
-{{ toYaml .Values.resources | indent 12 }}
+            {{ toYaml .Values.resources | nindent 12 }}
       volumes:
         - name: data
-          {{- if .Values.persistence.enabled }}
+          {{ if .Values.persistence.enabled }}
           persistentVolumeClaim:
             claimName: {{ include "trackhound.fullname" . }}-data
-          {{- else }}
+          {{ else }}
           emptyDir: {}
-          {{- end }}
+          {{ end }}

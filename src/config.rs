@@ -27,6 +27,7 @@ pub struct Config {
     pub gmail_query: String,
     pub openai_api_key: String,
     pub openai_model: String,
+    pub openai_url: String,
     pub gmail_imap_host: String,
     pub gmail_imap_port: u16,
     pub gmail_imap_username: String,
@@ -49,6 +50,10 @@ impl Config {
             gmail_query: env_or("TRACKHOUND_GMAIL_QUERY", "newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)"),
             openai_api_key: env_required("OPENAI_API_KEY")?,
             openai_model: env_or("TRACKHOUND_OPENAI_MODEL", "gpt-4.1-nano"),
+            openai_url: env_or(
+                "TRACKHOUND_OPENAI_URL",
+                "https://api.openai.com/v1/chat/completions",
+            ),
             gmail_imap_host: env_or("GMAIL_IMAP_HOST", "imap.gmail.com"),
             gmail_imap_port: env_or("GMAIL_IMAP_PORT", "993").parse()?,
             gmail_imap_username: env_required("GMAIL_IMAP_USERNAME")?,
@@ -70,6 +75,10 @@ impl Config {
             gmail_query: String::new(),
             openai_api_key: String::new(),
             openai_model: env_or("TRACKHOUND_OPENAI_MODEL", "gpt-4.1-nano"),
+            openai_url: env_or(
+                "TRACKHOUND_OPENAI_URL",
+                "https://api.openai.com/v1/chat/completions",
+            ),
             gmail_imap_host: env_or("GMAIL_IMAP_HOST", "imap.gmail.com"),
             gmail_imap_port: env_or("GMAIL_IMAP_PORT", "993").parse()?,
             gmail_imap_username: String::new(),
@@ -122,6 +131,28 @@ mod tests {
         assert_eq!(cfg.gmail_imap_host, "imap.gmail.com");
         assert_eq!(cfg.gmail_imap_port, 993);
         assert_eq!(cfg.gmail_imap_username, "kirill@example.com");
+        assert_eq!(cfg.openai_url, "https://api.openai.com/v1/chat/completions");
+    }
+
+    #[test]
+    fn config_accepts_custom_openai_url() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        clear_trackhound_env();
+        env::set_var("OPENAI_API_KEY", "openai");
+        env::set_var(
+            "TRACKHOUND_OPENAI_URL",
+            "http://openai-compatible.local/v1/chat/completions",
+        );
+        env::set_var("GMAIL_IMAP_USERNAME", "kirill@example.com");
+        env::set_var("GMAIL_IMAP_PASSWORD", "app-password");
+        env::set_var("TRACK17_SECURITY_KEY", "track17");
+
+        let cfg = Config::from_env().unwrap();
+
+        assert_eq!(
+            cfg.openai_url,
+            "http://openai-compatible.local/v1/chat/completions"
+        );
     }
 
     #[test]
@@ -145,6 +176,7 @@ mod tests {
             "TRACKHOUND_TRACK17_SYNC_INTERVAL_SECONDS",
             "TRACKHOUND_GMAIL_QUERY",
             "TRACKHOUND_OPENAI_MODEL",
+            "TRACKHOUND_OPENAI_URL",
             "OPENAI_API_KEY",
             "GMAIL_IMAP_HOST",
             "GMAIL_IMAP_PORT",

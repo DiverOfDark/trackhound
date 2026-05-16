@@ -33,6 +33,7 @@ TRACKHOUND_GMAIL_SCAN_INTERVAL_SECONDS=1800
 TRACKHOUND_TRACK17_SYNC_INTERVAL_SECONDS=3600
 TRACKHOUND_GMAIL_QUERY='newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)'
 TRACKHOUND_OPENAI_MODEL=gpt-4.1-nano
+TRACKHOUND_OPENAI_URL=https://api.openai.com/v1/chat/completions
 OPENAI_API_KEY=...
 GMAIL_IMAP_HOST=imap.gmail.com
 GMAIL_IMAP_PORT=993
@@ -73,6 +74,7 @@ TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
 helm upgrade --install trackhound ./charts/trackhound \
   --namespace trackhound --create-namespace \
   --set secrets.openaiApiKey='...' \
+  --set config.openaiUrl='https://api.openai.com/v1/chat/completions' \
   --set config.gmailImapUsername='you@gmail.com' \
   --set secrets.gmailImapPassword='google-app-password' \
   --set secrets.track17SecurityKey='...'

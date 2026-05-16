@@ -39,6 +39,7 @@ async fn main() -> anyhow::Result<()> {
         classifier: openai::OpenAiClassifier::new(
             cfg.openai_api_key.clone(),
             cfg.openai_model.clone(),
+            cfg.openai_url.clone(),
         ),
         track17: track17::Track17Client::new(cfg.track17_security_key.clone()),
         gmail_query: cfg.gmail_query.clone(),
