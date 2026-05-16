@@ -1,0 +1,50 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/diverofdark/trackhound
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8080
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  hosts:
+    - host: trackhound.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+persistence:
+  enabled: true
+  size: 1Gi
+  storageClass: ""
+  accessModes:
+    - ReadWriteOnce
+
+config:
+  bindAddr: 0.0.0.0:8080
+  databaseUrl: sqlite:///data/trackhound.sqlite
+  gmailScanIntervalSeconds: 1800
+  track17SyncIntervalSeconds: 3600
+  gmailQuery: "newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)"
+  openaiModel: gpt-4.1-nano
+  gmailTokenUri: https://oauth2.googleapis.com/token
+
+secrets:
+  existingSecret: ""
+  openaiApiKey: ""
+  gmailClientId: ""
+  gmailClientSecret: ""
+  gmailRefreshToken: ""
+  track17SecurityKey: ""
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}

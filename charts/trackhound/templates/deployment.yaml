@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "trackhound.fullname" . }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "trackhound.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "trackhound.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+    spec:
+      containers:
+        - name: trackhound
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["serve"]
+          env:
+            - name: TRACKHOUND_BIND_ADDR
+              value: {{ .Values.config.bindAddr | quote }}
+            - name: TRACKHOUND_DATABASE_URL
+              value: {{ .Values.config.databaseUrl | quote }}
+            - name: TRACKHOUND_GMAIL_SCAN_INTERVAL_SECONDS
+              value: {{ .Values.config.gmailScanIntervalSeconds | quote }}
+            - name: TRACKHOUND_TRACK17_SYNC_INTERVAL_SECONDS
+              value: {{ .Values.config.track17SyncIntervalSeconds | quote }}
+            - name: TRACKHOUND_GMAIL_QUERY
+              value: {{ .Values.config.gmailQuery | quote }}
+            - name: TRACKHOUND_OPENAI_MODEL
+              value: {{ .Values.config.openaiModel | quote }}
+            - name: GMAIL_TOKEN_URI
+              value: {{ .Values.config.gmailTokenUri | quote }}
+            - name: OPENAI_API_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: OPENAI_API_KEY } }
+            - name: GMAIL_CLIENT_ID
+              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_CLIENT_ID } }
+            - name: GMAIL_CLIENT_SECRET
+              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_CLIENT_SECRET } }
+            - name: GMAIL_REFRESH_TOKEN
+              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: GMAIL_REFRESH_TOKEN } }
+            - name: TRACK17_SECURITY_KEY
+              valueFrom: { secretKeyRef: { name: {{ include "trackhound.secretName" . }}, key: TRACK17_SECURITY_KEY } }
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+          volumeMounts:
+            - name: data
+              mountPath: /data
+          resources:
+{{ toYaml .Values.resources | indent 12 }}
+      volumes:
+        - name: data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "trackhound.fullname" . }}-data
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
