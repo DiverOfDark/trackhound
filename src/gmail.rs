@@ -1,44 +1,15 @@
 use crate::{config::Config, models::EmailMessage};
-use base64::{engine::general_purpose::URL_SAFE, Engine};
-use reqwest::Client;
-use serde::Deserialize;
-use std::collections::HashMap;
+use chrono::Utc;
+use mailparse::MailHeaderMap;
 
 #[derive(Clone)]
 pub struct GmailClient {
-    http: Client,
     cfg: Config,
 }
 
 impl GmailClient {
     pub fn new(cfg: Config) -> Self {
-        Self {
-            http: Client::new(),
-            cfg,
-        }
-    }
-
-    async fn access_token(&self) -> anyhow::Result<String> {
-        #[derive(Deserialize)]
-        struct TokenResp {
-            access_token: String,
-        }
-        let params = [
-            ("client_id", self.cfg.gmail_client_id.as_str()),
-            ("client_secret", self.cfg.gmail_client_secret.as_str()),
-            ("refresh_token", self.cfg.gmail_refresh_token.as_str()),
-            ("grant_type", "refresh_token"),
-        ];
-        let resp = self
-            .http
-            .post(&self.cfg.gmail_token_uri)
-            .form(&params)
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<TokenResp>()
-            .await?;
-        Ok(resp.access_token)
+        Self { cfg }
     }
 
     pub async fn search_messages(
@@ -46,152 +17,142 @@ impl GmailClient {
         query: &str,
         max_results: u32,
     ) -> anyhow::Result<Vec<String>> {
-        #[derive(Deserialize)]
-        struct ListResp {
-            messages: Option<Vec<MessageId>>,
-        }
-        #[derive(Deserialize)]
-        struct MessageId {
-            id: String,
-        }
-        let token = self.access_token().await?;
-        let resp = self
-            .http
-            .get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
-            .bearer_auth(token)
-            .query(&[("q", query), ("maxResults", &max_results.to_string())])
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<ListResp>()
-            .await?;
-        Ok(resp
-            .messages
-            .unwrap_or_default()
-            .into_iter()
-            .map(|m| m.id)
-            .collect())
+        let cfg = self.cfg.clone();
+        let query = query.to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut session = login_imap(&cfg)?;
+            let criteria = format!("X-GM-RAW {}", quote_imap_string(&query));
+            let uids = session.uid_search(criteria)?;
+            let mut uids: Vec<u32> = uids.into_iter().collect();
+            uids.sort_unstable_by(|a, b| b.cmp(a));
+            let max_results = max_results as usize;
+            let ids = uids
+                .into_iter()
+                .take(max_results)
+                .map(|uid| format!("imap:{uid}"))
+                .collect();
+            let _ = session.logout();
+            Ok(ids)
+        })
+        .await?
     }
 
     pub async fn get_message(&self, id: &str) -> anyhow::Result<EmailMessage> {
-        let token = self.access_token().await?;
-        let raw = self
-            .http
-            .get(format!(
-                "https://gmail.googleapis.com/gmail/v1/users/me/messages/{id}"
-            ))
-            .bearer_auth(token)
-            .query(&[("format", "full")])
-            .send()
-            .await?
-            .error_for_status()?
-            .json::<GmailMessage>()
-            .await?;
-        Ok(raw.into_email_message())
+        let cfg = self.cfg.clone();
+        let uid = id.strip_prefix("imap:").unwrap_or(id).to_string();
+        tokio::task::spawn_blocking(move || {
+            let mut session = login_imap(&cfg)?;
+            let messages = session.uid_fetch(&uid, "RFC822")?;
+            let message = messages
+                .iter()
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("IMAP message uid {uid} not found"))?;
+            let body = message
+                .body()
+                .ok_or_else(|| anyhow::anyhow!("IMAP message uid {uid} has no RFC822 body"))?;
+            let parsed = parse_raw_imap_email(&uid, body)?;
+            let _ = session.logout();
+            Ok(parsed)
+        })
+        .await?
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GmailMessage {
-    id: String,
-    thread_id: String,
-    snippet: Option<String>,
-    internal_date: Option<String>,
-    payload: Option<GmailPayload>,
+fn login_imap(cfg: &Config) -> anyhow::Result<imap::Session<imap::Connection>> {
+    let client = imap::ClientBuilder::new(&cfg.gmail_imap_host, cfg.gmail_imap_port)
+        .tls_kind(imap::TlsKind::Rust)
+        .connect()?;
+    let mut session = client
+        .login(&cfg.gmail_imap_username, &cfg.gmail_imap_password)
+        .map_err(|(e, _)| e)?;
+    session.select(&cfg.gmail_imap_mailbox)?;
+    Ok(session)
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct GmailPayload {
-    mime_type: Option<String>,
-    headers: Option<Vec<GmailHeader>>,
-    body: Option<GmailBody>,
-    parts: Option<Vec<GmailPayload>>,
+fn quote_imap_string(value: &str) -> String {
+    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
+    format!("\"{escaped}\"")
 }
 
-#[derive(Debug, Deserialize)]
-struct GmailHeader {
-    name: String,
-    value: String,
+fn parse_raw_imap_email(uid: &str, raw: &[u8]) -> anyhow::Result<EmailMessage> {
+    let parsed = mailparse::parse_mail(raw)?;
+    let headers = parsed.get_headers();
+    let subject = headers.get_first_value("Subject").unwrap_or_default();
+    let from_addr = headers.get_first_value("From").unwrap_or_default();
+    let message_id = headers
+        .get_first_value("Message-ID")
+        .unwrap_or_else(|| format!("imap:{uid}"));
+    let body_text = extract_mailparse_text(&parsed)?;
+    let snippet = body_text.chars().take(300).collect();
+    let internal_date_ms = headers
+        .get_first_value("Date")
+        .and_then(|d| mailparse::dateparse(&d).ok())
+        .map(|seconds| seconds * 1000)
+        .unwrap_or_else(|| Utc::now().timestamp_millis());
+
+    Ok(EmailMessage {
+        id: format!("imap:{uid}"),
+        thread_id: message_id,
+        subject,
+        from_addr,
+        snippet,
+        body_text,
+        internal_date_ms,
+    })
 }
 
-#[derive(Debug, Deserialize)]
-struct GmailBody {
-    data: Option<String>,
-}
-
-impl GmailMessage {
-    fn into_email_message(self) -> EmailMessage {
-        let headers = header_map(self.payload.as_ref());
-        let subject = headers.get("subject").cloned().unwrap_or_default();
-        let from_addr = headers.get("from").cloned().unwrap_or_default();
-        let body_text = self.payload.as_ref().map(extract_text).unwrap_or_default();
-        EmailMessage {
-            id: self.id,
-            thread_id: self.thread_id,
-            subject,
-            from_addr,
-            snippet: self.snippet.unwrap_or_default(),
-            body_text,
-            internal_date_ms: self
-                .internal_date
-                .and_then(|d| d.parse().ok())
-                .unwrap_or_default(),
+fn extract_mailparse_text(parsed: &mailparse::ParsedMail<'_>) -> anyhow::Result<String> {
+    if parsed.subparts.is_empty() {
+        let mimetype = parsed.ctype.mimetype.to_ascii_lowercase();
+        if mimetype.starts_with("text/") || mimetype.is_empty() {
+            return Ok(parsed.get_body()?);
         }
+        return Ok(String::new());
     }
-}
 
-fn header_map(payload: Option<&GmailPayload>) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    if let Some(headers) = payload.and_then(|p| p.headers.as_ref()) {
-        for h in headers {
-            map.insert(h.name.to_lowercase(), h.value.clone());
-        }
-    }
-    map
-}
-
-fn extract_text(payload: &GmailPayload) -> String {
     let mut out = String::new();
-    if payload
-        .mime_type
-        .as_deref()
-        .unwrap_or("")
-        .starts_with("text/")
-    {
-        if let Some(data) = payload.body.as_ref().and_then(|b| b.data.as_ref()) {
-            let mut padded = data.clone();
-            while padded.len() % 4 != 0 {
-                padded.push('=');
+    for part in &parsed.subparts {
+        let text = extract_mailparse_text(part)?;
+        if !text.is_empty() {
+            if !out.is_empty() {
+                out.push('\n');
             }
-            if let Ok(bytes) = URL_SAFE.decode(padded) {
-                out.push_str(&String::from_utf8_lossy(&bytes));
-            }
+            out.push_str(&text);
         }
     }
-    if let Some(parts) = &payload.parts {
-        for p in parts {
-            out.push('\n');
-            out.push_str(&extract_text(p));
-        }
-    }
-    out
+    Ok(out)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
     #[test]
-    fn decodes_base64url_text_part() {
-        let payload = GmailPayload {
-            mime_type: Some("text/plain".into()),
-            headers: None,
-            body: Some(GmailBody {
-                data: Some("SGVsbG8tdHJhY2tpbmc".into()),
-            }),
-            parts: None,
-        };
-        assert_eq!(extract_text(&payload), "Hello-tracking");
+    fn quotes_gmail_raw_query_for_imap_search() {
+        assert_eq!(
+            quote_imap_string("newer_than:14d \"tracking\" \\ dhl"),
+            "\"newer_than:14d \\\"tracking\\\" \\\\ dhl\""
+        );
+    }
+
+    #[test]
+    fn parses_raw_imap_email_into_email_message() {
+        let raw = concat!(
+            "From: DHL Paket <noreply@dhl.de>\r\n",
+            "Subject: Your parcel is moving\r\n",
+            "Date: Sat, 16 May 2026 20:30:00 +0000\r\n",
+            "Message-ID: <imap-message-id@example.com>\r\n",
+            "\r\n",
+            "Tracking number: JJD000390012345678901\r\n"
+        );
+
+        let msg = parse_raw_imap_email("42", raw.as_bytes()).unwrap();
+
+        assert_eq!(msg.id, "imap:42");
+        assert_eq!(msg.thread_id, "<imap-message-id@example.com>");
+        assert_eq!(msg.subject, "Your parcel is moving");
+        assert_eq!(msg.from_addr, "DHL Paket <noreply@dhl.de>");
+        assert!(msg.body_text.contains("JJD000390012345678901"));
+        assert_eq!(msg.internal_date_ms, 1778963400000);
     }
 }

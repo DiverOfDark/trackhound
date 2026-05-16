@@ -3,15 +3,16 @@ name = "trackhound"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Gmail + 17TRACK parcel tracker with SQLite and a tiny HTTP API"
+description = "Gmail IMAP + 17TRACK parcel tracker with SQLite and a tiny HTTP API"
 
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
 axum = "0.7"
-base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+imap = { version = "3.0.0-alpha.15", default-features = false, features = ["rustls-tls"] }
+mailparse = "0.15"
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
