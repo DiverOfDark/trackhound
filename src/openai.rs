@@ -36,8 +36,7 @@ impl OpenAiClassifier {
             "messages": [
                 {"role":"system", "content": SYSTEM_PROMPT},
                 {"role":"user", "content": content}
-            ],
-            "temperature": 0.0
+            ]
         });
         debug!(
             url = %self.openai_url,
