@@ -96,9 +96,31 @@ impl AppState {
                             )
                             .await?;
                             summary.shipments_upserted += 1;
+                            if let Some(oid) = order_id.as_deref() {
+                                let removed =
+                                    db::delete_amazon_placeholder(&self.pool, oid).await?;
+                                if removed > 0 {
+                                    debug!(
+                                        order_id = oid,
+                                        "removed amazon placeholder superseded by tracking"
+                                    );
+                                }
+                            }
                         }
                     }
-                    ExtractedKind::AmazonOrder => {}
+                    ExtractedKind::AmazonOrder => {
+                        if let Some(oid) = order_id.as_deref() {
+                            let placeholder_id =
+                                db::upsert_amazon_placeholder(&self.pool, &msg, item, oid).await?;
+                            debug!(
+                                email_id = %msg.id,
+                                order_id = oid,
+                                placeholder_id = %placeholder_id,
+                                "amazon placeholder shipment upserted"
+                            );
+                            summary.shipments_upserted += 1;
+                        }
+                    }
                     ExtractedKind::StatusUpdate => {
                         if let Some(order_id) = order_id.as_deref() {
                             let status = item

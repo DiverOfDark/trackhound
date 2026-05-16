@@ -3,6 +3,28 @@ use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
 
 #[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
+pub struct OrderRow {
+    pub id: String,
+    pub source: String,
+    pub order_number: String,
+    pub merchant: Option<String>,
+    pub status: String,
+    pub last_email_message_id: Option<String>,
+    pub last_email_thread_id: Option<String>,
+    pub last_email_subject: Option<String>,
+    pub raw_last_event: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+#[derive(Debug, Serialize, ToSchema)]
+pub struct OrderWithShipments {
+    #[serde(flatten)]
+    pub order: OrderRow,
+    pub shipments: Vec<ShipmentRow>,
+}
+
+#[derive(Debug, Serialize, ToSchema, sqlx::FromRow)]
 pub struct ShipmentRow {
     pub id: String,
     pub tracking_number: Option<String>,

@@ -129,6 +129,73 @@ pub async fn upsert_shipment(
     }
 }
 
+pub async fn upsert_amazon_placeholder(
+    pool: &SqlitePool,
+    msg: &EmailMessage,
+    item: &ExtractedShipment,
+    order_id: &str,
+) -> anyhow::Result<String> {
+    let status = item
+        .status
+        .as_deref()
+        .map(ShipmentStatus::from_text)
+        .unwrap_or(ShipmentStatus::Detected)
+        .as_str();
+    let id = Uuid::new_v4().to_string();
+    sqlx::query(r#"INSERT INTO shipments(id, tracking_number, order_id, source, title, status, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
+                  VALUES (?, NULL, ?, 'amazon_placeholder', ?, ?, ?, ?, ?, ?)
+                  ON CONFLICT(order_id) WHERE source = 'amazon_placeholder' DO UPDATE SET
+                    title = COALESCE(excluded.title, shipments.title),
+                    status = excluded.status,
+                    last_email_message_id = excluded.last_email_message_id,
+                    last_email_thread_id = excluded.last_email_thread_id,
+                    last_email_subject = excluded.last_email_subject,
+                    raw_last_event = COALESCE(excluded.raw_last_event, shipments.raw_last_event),
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"#)
+        .bind(&id).bind(order_id).bind(&item.title).bind(status)
+        .bind(&msg.id).bind(&msg.thread_id).bind(&msg.subject).bind(&item.reason)
+        .execute(pool).await?;
+    let row: (String,) = sqlx::query_as(
+        "SELECT id FROM shipments WHERE order_id = ? AND source = 'amazon_placeholder'",
+    )
+    .bind(order_id)
+    .fetch_one(pool)
+    .await?;
+    Ok(row.0)
+}
+
+pub async fn delete_amazon_placeholder(pool: &SqlitePool, order_id: &str) -> anyhow::Result<u64> {
+    let result =
+        sqlx::query("DELETE FROM shipments WHERE order_id = ? AND source = 'amazon_placeholder'")
+            .bind(order_id)
+            .execute(pool)
+            .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn list_orders(pool: &SqlitePool) -> anyhow::Result<Vec<OrderRow>> {
+    sqlx::query_as::<_, OrderRow>(r#"SELECT * FROM orders ORDER BY updated_at DESC"#)
+        .fetch_all(pool)
+        .await
+        .map_err(Into::into)
+}
+
+pub async fn order_by_id(pool: &SqlitePool, id: &str) -> anyhow::Result<Option<OrderRow>> {
+    sqlx::query_as::<_, OrderRow>(r#"SELECT * FROM orders WHERE id = ?"#)
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(Into::into)
+}
+
+pub async fn shipments_for_order(
+    pool: &SqlitePool,
+    order_id: &str,
+) -> anyhow::Result<Vec<ShipmentRow>> {
+    sqlx::query_as::<_, ShipmentRow>(r#"SELECT s.*, o.order_number, o.merchant FROM shipments s LEFT JOIN orders o ON o.id = s.order_id WHERE s.order_id = ? ORDER BY s.updated_at DESC"#)
+        .bind(order_id).fetch_all(pool).await.map_err(Into::into)
+}
+
 pub async fn mirror_order_status_if_single_shipment(
     pool: &SqlitePool,
     order_id: &str,
@@ -253,5 +320,75 @@ mod tests {
     #[test]
     fn normalizes_tracking_numbers() {
         assert_eq!(normalize_tracking(" rr 123 de "), "RR123DE");
+    }
+
+    #[tokio::test]
+    async fn amazon_placeholder_is_idempotent_and_replaced_by_tracking() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let msg = EmailMessage {
+            id: "m1".into(),
+            thread_id: "t1".into(),
+            subject: "Your Amazon order".into(),
+            from_addr: "auto-confirm@amazon.com".into(),
+            snippet: "".into(),
+            body_text: "".into(),
+            internal_date_ms: 1,
+        };
+        let order_item = ExtractedShipment {
+            kind: ExtractedKind::AmazonOrder,
+            tracking_number: None,
+            order_number: Some("123-1234567-1234567".into()),
+            carrier: None,
+            merchant: Some("Amazon".into()),
+            status: Some("detected".into()),
+            expected_delivery_date: None,
+            title: Some("Book".into()),
+            confidence: 0.9,
+            reason: None,
+        };
+        let order_id = upsert_order(&pool, &msg, &order_item).await.unwrap();
+
+        let first = upsert_amazon_placeholder(&pool, &msg, &order_item, &order_id)
+            .await
+            .unwrap();
+        let second = upsert_amazon_placeholder(&pool, &msg, &order_item, &order_id)
+            .await
+            .unwrap();
+        assert_eq!(first, second, "placeholder must be idempotent per order");
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM shipments WHERE order_id = ? AND source = 'amazon_placeholder'",
+        )
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(count.0, 1);
+
+        let tracking_item = ExtractedShipment {
+            kind: ExtractedKind::Tracking,
+            tracking_number: Some("AB123".into()),
+            order_number: order_item.order_number.clone(),
+            carrier: None,
+            merchant: Some("Amazon".into()),
+            status: None,
+            expected_delivery_date: None,
+            title: None,
+            confidence: 0.95,
+            reason: None,
+        };
+        upsert_shipment(&pool, &msg, &tracking_item, Some(&order_id), true)
+            .await
+            .unwrap();
+        let removed = delete_amazon_placeholder(&pool, &order_id).await.unwrap();
+        assert_eq!(removed, 1);
+
+        let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM shipments WHERE order_id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count.0, 1, "only the real tracking shipment should remain");
     }
 }

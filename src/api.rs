@@ -1,6 +1,6 @@
 use crate::{
     db,
-    models::{Health, ScanSummary, ShipmentRow, SyncSummary},
+    models::{Health, OrderRow, OrderWithShipments, ScanSummary, ShipmentRow, SyncSummary},
     service::AppState,
 };
 use axum::{
@@ -21,13 +21,23 @@ use utoipa::OpenApi;
         list_shipments,
         today,
         get_shipment,
+        list_orders,
+        get_order,
         scan,
         sync_track17,
     ),
-    components(schemas(Health, ShipmentRow, ScanSummary, SyncSummary)),
+    components(schemas(
+        Health,
+        ShipmentRow,
+        OrderRow,
+        OrderWithShipments,
+        ScanSummary,
+        SyncSummary,
+    )),
     tags(
         (name = "health", description = "Health checks"),
         (name = "shipments", description = "Shipment queries"),
+        (name = "orders", description = "Order queries"),
         (name = "operations", description = "Manual scan/sync triggers"),
     )
 )]
@@ -41,6 +51,8 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/shipments", get(list_shipments))
         .route("/shipments/today", get(today))
         .route("/shipments/:id", get(get_shipment))
+        .route("/orders", get(list_orders))
+        .route("/orders/:id", get(get_order))
         .route("/scan", post(scan))
         .route("/sync", post(sync_track17))
         .layer(TraceLayer::new_for_http())
@@ -120,6 +132,50 @@ async fn get_shipment(
     match db::shipment_by_id(&state.pool, &id).await {
         Ok(Some(v)) => Json(v).into_response(),
         Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/orders",
+    tag = "orders",
+    responses(
+        (status = 200, description = "All known orders", body = [OrderRow]),
+        (status = 500, description = "Internal server error", body = String)
+    )
+)]
+async fn list_orders(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    match db::list_orders(&state.pool).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => err(e),
+    }
+}
+
+#[utoipa::path(
+    get,
+    path = "/orders/{id}",
+    tag = "orders",
+    params(
+        ("id" = String, Path, description = "Order UUID")
+    ),
+    responses(
+        (status = 200, description = "Order with its shipments", body = OrderWithShipments),
+        (status = 404, description = "Order not found"),
+        (status = 500, description = "Internal server error", body = String)
+    )
+)]
+async fn get_order(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<String>,
+) -> impl IntoResponse {
+    let order = match db::order_by_id(&state.pool, &id).await {
+        Ok(Some(o)) => o,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return err(e),
+    };
+    match db::shipments_for_order(&state.pool, &order.id).await {
+        Ok(shipments) => Json(OrderWithShipments { order, shipments }).into_response(),
         Err(e) => err(e),
     }
 }
