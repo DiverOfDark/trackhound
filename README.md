@@ -74,3 +74,39 @@ helm upgrade --install trackhound ./charts/trackhound \
   --set secrets.gmailRefreshToken='...' \
   --set secrets.track17SecurityKey='...'
 ```
+
+To use an externally managed Secret, set `secrets.existingSecret` and inject the ExternalSecret manifest through `additionalObjects`:
+
+```yaml
+secrets:
+  existingSecret: trackhound-secrets
+
+additionalObjects:
+  - apiVersion: external-secrets.io/v1
+    kind: ExternalSecret
+    metadata:
+      name: trackhound-secrets
+    spec:
+      refreshInterval: 1h
+      secretStoreRef:
+        name: cluster-secrets
+        kind: ClusterSecretStore
+      target:
+        name: trackhound-secrets
+      data:
+        - secretKey: OPENAI_API_KEY
+          remoteRef:
+            key: trackhound/openai-api-key
+        - secretKey: GMAIL_CLIENT_ID
+          remoteRef:
+            key: trackhound/gmail-client-id
+        - secretKey: GMAIL_CLIENT_SECRET
+          remoteRef:
+            key: trackhound/gmail-client-secret
+        - secretKey: GMAIL_REFRESH_TOKEN
+          remoteRef:
+            key: trackhound/gmail-refresh-token
+        - secretKey: TRACK17_SECURITY_KEY
+          remoteRef:
+            key: trackhound/track17-security-key
+```
