@@ -30,6 +30,8 @@ spec:
               value: {{ .Values.config.track17SyncIntervalSeconds | quote }}
             - name: TRACKHOUND_GMAIL_QUERY
               value: {{ .Values.config.gmailQuery | quote }}
+            - name: TRACKHOUND_OPENAPI_URL
+              value: {{ .Values.config.openapiUrl | quote }}
             - name: TRACKHOUND_OPENAI_MODEL
               value: {{ .Values.config.openaiModel | quote }}
             - name: GMAIL_IMAP_HOST

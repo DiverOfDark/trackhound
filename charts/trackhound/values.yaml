@@ -33,6 +33,7 @@ config:
   gmailScanIntervalSeconds: 1800
   track17SyncIntervalSeconds: 3600
   gmailQuery: "newer_than:14d (shipment OR tracking OR package OR parcel OR delivery OR amazon OR dhl OR dpd OR ups OR fedex OR gls)"
+  openapiUrl: /api-docs/openapi.json
   openaiModel: gpt-4.1-nano
   gmailImapHost: imap.gmail.com
   gmailImapPort: 993

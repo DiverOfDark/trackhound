@@ -42,6 +42,7 @@ async fn main() -> anyhow::Result<()> {
         ),
         track17: track17::Track17Client::new(cfg.track17_security_key.clone()),
         gmail_query: cfg.gmail_query.clone(),
+        openapi_url: cfg.openapi_url.clone(),
     });
 
     match command {
