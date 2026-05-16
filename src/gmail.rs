@@ -35,7 +35,11 @@ impl GmailClient {
                 .take(max_results)
                 .map(|uid| format!("imap:{uid}"))
                 .collect();
-            debug!(matched = total, returned = ids.len(), "imap search complete");
+            debug!(
+                matched = total,
+                returned = ids.len(),
+                "imap search complete"
+            );
             let _ = session.logout();
             Ok(ids)
         })
