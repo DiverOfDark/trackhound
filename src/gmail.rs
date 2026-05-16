@@ -1,6 +1,7 @@
 use crate::{config::Config, models::EmailMessage};
 use chrono::Utc;
 use mailparse::MailHeaderMap;
+use tracing::{debug, trace};
 
 #[derive(Clone)]
 pub struct GmailClient {
@@ -20,17 +21,21 @@ impl GmailClient {
         let cfg = self.cfg.clone();
         let query = query.to_string();
         tokio::task::spawn_blocking(move || {
+            debug!(query = %query, max_results, "imap search starting");
             let mut session = login_imap(&cfg)?;
             let criteria = format!("X-GM-RAW {}", quote_imap_string(&query));
+            trace!(criteria = %criteria, "imap search criteria");
             let uids = session.uid_search(criteria)?;
+            let total = uids.len();
             let mut uids: Vec<u32> = uids.into_iter().collect();
             uids.sort_unstable_by(|a, b| b.cmp(a));
             let max_results = max_results as usize;
-            let ids = uids
+            let ids: Vec<String> = uids
                 .into_iter()
                 .take(max_results)
                 .map(|uid| format!("imap:{uid}"))
                 .collect();
+            debug!(matched = total, returned = ids.len(), "imap search complete");
             let _ = session.logout();
             Ok(ids)
         })
@@ -41,6 +46,7 @@ impl GmailClient {
         let cfg = self.cfg.clone();
         let uid = id.strip_prefix("imap:").unwrap_or(id).to_string();
         tokio::task::spawn_blocking(move || {
+            debug!(uid = %uid, "imap fetch starting");
             let mut session = login_imap(&cfg)?;
             let messages = session.uid_fetch(&uid, "RFC822")?;
             let message = messages
@@ -51,6 +57,13 @@ impl GmailClient {
                 .body()
                 .ok_or_else(|| anyhow::anyhow!("IMAP message uid {uid} has no RFC822 body"))?;
             let parsed = parse_raw_imap_email(&uid, body)?;
+            debug!(
+                uid = %uid,
+                subject = %parsed.subject,
+                from = %parsed.from_addr,
+                body_chars = parsed.body_text.chars().count(),
+                "imap fetch complete"
+            );
             let _ = session.logout();
             Ok(parsed)
         })
@@ -59,6 +72,13 @@ impl GmailClient {
 }
 
 fn login_imap(cfg: &Config) -> anyhow::Result<imap::Session<imap::Connection>> {
+    debug!(
+        host = %cfg.gmail_imap_host,
+        port = cfg.gmail_imap_port,
+        username = %cfg.gmail_imap_username,
+        mailbox = %cfg.gmail_imap_mailbox,
+        "imap connecting"
+    );
     let client = imap::ClientBuilder::new(&cfg.gmail_imap_host, cfg.gmail_imap_port)
         .tls_kind(imap::TlsKind::Rust)
         .connect()?;
@@ -66,6 +86,7 @@ fn login_imap(cfg: &Config) -> anyhow::Result<imap::Session<imap::Connection>> {
         .login(&cfg.gmail_imap_username, &cfg.gmail_imap_password)
         .map_err(|(e, _)| e)?;
     session.select(&cfg.gmail_imap_mailbox)?;
+    debug!(mailbox = %cfg.gmail_imap_mailbox, "imap session ready");
     Ok(session)
 }
 

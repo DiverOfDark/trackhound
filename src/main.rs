@@ -17,7 +17,10 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("trackhound=info".parse()?))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("trackhound=debug,tower_http=debug")),
+        )
         .init();
     let cli = Cli::parse();
     let command = cli.command.unwrap_or(Command::Serve);

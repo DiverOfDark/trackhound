@@ -2,6 +2,7 @@ use crate::models::{EmailMessage, ExtractionResult};
 use anyhow::Context;
 use reqwest::Client;
 use serde_json::{json, Value};
+use tracing::{debug, error, trace};
 
 #[derive(Clone)]
 pub struct OpenAiClassifier {
@@ -38,19 +39,44 @@ impl OpenAiClassifier {
             ],
             "temperature": 0.0
         });
-        let value: Value = self
+        debug!(
+            url = %self.openai_url,
+            model = %self.model,
+            email_id = %msg.id,
+            subject = %msg.subject,
+            content_chars = content.chars().count(),
+            "openai classify request"
+        );
+        trace!(payload = %body, "openai classify payload");
+        let response = self
             .http
             .post(&self.openai_url)
             .bearer_auth(&self.api_key)
             .json(&body)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
+        let status = response.status();
+        let response_text = response.text().await?;
+        debug!(%status, response_chars = response_text.len(), "openai classify response");
+        if !status.is_success() {
+            error!(
+                %status,
+                url = %self.openai_url,
+                model = %self.model,
+                email_id = %msg.id,
+                body = %response_text,
+                "openai classify HTTP error"
+            );
+            anyhow::bail!("OpenAI request failed: HTTP {status}: {response_text}");
+        }
+        trace!(body = %response_text, "openai classify response body");
+        let value: Value = serde_json::from_str(&response_text)
+            .with_context(|| format!("OpenAI response not JSON: {response_text}"))?;
         let text = value["choices"][0]["message"]["content"]
             .as_str()
-            .context("OpenAI response missing content")?;
+            .with_context(|| format!("OpenAI response missing content: {response_text}"))?;
+        debug!(extraction_chars = text.len(), "openai extraction payload");
+        trace!(extraction = %text, "openai extraction body");
         parse_extraction_json(text)
     }
 }

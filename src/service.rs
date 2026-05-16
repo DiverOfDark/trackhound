@@ -5,7 +5,7 @@ use crate::{
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::time::{interval, MissedTickBehavior};
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -18,7 +18,9 @@ pub struct AppState {
 
 impl AppState {
     pub async fn scan_gmail(&self) -> anyhow::Result<ScanSummary> {
+        debug!(query = %self.gmail_query, "gmail scan starting");
         let ids = self.gmail.search_messages(&self.gmail_query, 50).await?;
+        debug!(matched = ids.len(), "gmail scan matched ids");
         let mut summary = ScanSummary {
             messages_seen: ids.len(),
             messages_processed: 0,
@@ -28,13 +30,31 @@ impl AppState {
         };
         for id in ids {
             if db::email_seen(&self.pool, &id).await? {
+                debug!(email_id = %id, "skip: already seen");
                 continue;
             }
             let msg = self.gmail.get_message(&id).await?;
+            debug!(
+                email_id = %msg.id,
+                subject = %msg.subject,
+                from = %msg.from_addr,
+                "classifying email"
+            );
             let extraction = self.classifier.classify(&msg).await?;
+            debug!(
+                email_id = %msg.id,
+                shipments = extraction.shipments.len(),
+                "classifier extraction"
+            );
             let classifier_json = serde_json::to_string(&extraction)?;
             for item in &extraction.shipments {
                 if item.confidence < 0.70 || item.kind == ExtractedKind::Ignore {
+                    debug!(
+                        email_id = %msg.id,
+                        kind = ?item.kind,
+                        confidence = item.confidence,
+                        "skip: low confidence or ignore"
+                    );
                     continue;
                 }
                 let order_id = if item.order_number.is_some() {
@@ -51,6 +71,12 @@ impl AppState {
                                 .as_deref()
                                 .or(item.merchant.as_deref())
                                 .or(item.order_number.as_deref());
+                            debug!(
+                                email_id = %msg.id,
+                                tracking = tn,
+                                carrier = ?item.carrier,
+                                "registering tracking number"
+                            );
                             let registered = match self.track17.register(tn, remark).await {
                                 Ok(()) => {
                                     summary.registered_in_17track += 1;
@@ -100,13 +126,21 @@ impl AppState {
 
     pub async fn sync_track17(&self) -> anyhow::Result<SyncSummary> {
         let numbers = db::tracking_numbers_for_sync(&self.pool).await?;
+        debug!(count = numbers.len(), "17track sync starting");
         let mut summary = SyncSummary {
             checked: numbers.len(),
             updated: 0,
         };
         for chunk in numbers.chunks(40) {
+            debug!(chunk_size = chunk.len(), "17track sync chunk");
             let statuses = self.track17.get_statuses(chunk).await?;
             for s in statuses {
+                debug!(
+                    tracking = %s.number,
+                    status = %s.status.as_str(),
+                    event_at = ?s.event_at,
+                    "17track status update"
+                );
                 db::update_tracking_status(
                     &self.pool,
                     &s.number,

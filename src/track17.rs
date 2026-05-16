@@ -1,6 +1,7 @@
 use crate::status::ShipmentStatus;
 use reqwest::Client;
 use serde_json::{json, Value};
+use tracing::{debug, trace, warn};
 
 #[derive(Clone)]
 pub struct Track17Client {
@@ -30,20 +31,29 @@ impl Track17Client {
         if let Some(remark) = remark {
             item["remark"] = json!(remark);
         }
-        let value: Value = self
+        debug!(tracking = %number, remark = ?remark, "17track register request");
+        let response = self
             .http
             .post("https://api.17track.net/track/v1/register")
             .header("17token", &self.security_key)
             .json(&json!([item]))
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
+        let status = response.status();
+        let body = response.text().await?;
+        debug!(%status, tracking = %number, "17track register response");
+        trace!(body = %body, "17track register body");
+        if !status.is_success() {
+            anyhow::bail!("17TRACK register HTTP {status}: {body}");
+        }
+        let value: Value = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("17TRACK register non-JSON ({e}): {body}"))?;
         if contains_error_code(&value, -18019901) {
+            debug!(tracking = %number, "17track register: already registered");
             return Ok(());
         }
         if value.get("code").and_then(|v| v.as_i64()).unwrap_or(0) != 0 {
+            warn!(tracking = %number, response = %value, "17track register non-zero code");
             anyhow::bail!("17TRACK register failed: {value}");
         }
         Ok(())
@@ -51,20 +61,31 @@ impl Track17Client {
 
     pub async fn get_statuses(&self, numbers: &[String]) -> anyhow::Result<Vec<Track17Status>> {
         if numbers.is_empty() {
+            debug!("17track gettrackinfo skipped: empty input");
             return Ok(vec![]);
         }
         let payload: Vec<Value> = numbers.iter().map(|n| json!({"number": n})).collect();
-        let value: Value = self
+        debug!(count = numbers.len(), "17track gettrackinfo request");
+        trace!(numbers = ?numbers, "17track gettrackinfo numbers");
+        let response = self
             .http
             .post("https://api.17track.net/track/v1/gettrackinfo")
             .header("17token", &self.security_key)
             .json(&payload)
             .send()
-            .await?
-            .error_for_status()?
-            .json()
             .await?;
-        Ok(parse_track17_statuses(&value))
+        let status = response.status();
+        let body = response.text().await?;
+        debug!(%status, body_chars = body.len(), "17track gettrackinfo response");
+        trace!(body = %body, "17track gettrackinfo body");
+        if !status.is_success() {
+            anyhow::bail!("17TRACK gettrackinfo HTTP {status}: {body}");
+        }
+        let value: Value = serde_json::from_str(&body)
+            .map_err(|e| anyhow::anyhow!("17TRACK gettrackinfo non-JSON ({e}): {body}"))?;
+        let parsed = parse_track17_statuses(&value);
+        debug!(parsed = parsed.len(), "17track gettrackinfo parsed");
+        Ok(parsed)
     }
 }
 
