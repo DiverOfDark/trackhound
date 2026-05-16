@@ -19,7 +19,7 @@ async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("trackhound=debug,tower_http=debug")),
+                .unwrap_or_else(|_| EnvFilter::new("trackhound=info")),
         )
         .init();
     let cli = Cli::parse();
