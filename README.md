@@ -44,16 +44,6 @@ TRACK17_SECURITY_KEY=...
 
 Create a Google App Password for the mailbox account and use that value as `GMAIL_IMAP_PASSWORD`. OAuth credentials are not used.
 
-For local development on Kirill's Hermes box:
-
-```bash
-eval "$(python3 scripts/hermes-secrets-to-env.py)"
-export OPENAI_API_KEY=...
-export GMAIL_IMAP_USERNAME=you@gmail.com
-export GMAIL_IMAP_PASSWORD='google-app-password-without-spaces'
-TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
-```
-
 ## API
 
 Interactive Scalar API documentation is served at:
