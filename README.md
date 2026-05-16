@@ -39,7 +39,13 @@ GMAIL_REFRESH_TOKEN=...
 TRACK17_SECURITY_KEY=...
 ```
 
-You can also mount the same OAuth values from the Gmail `credentials.json` / `token.json` files into env vars.
+You can also mount the same OAuth values from the Gmail `credentials.json` / `token.json` files into env vars. For local development on Kirill's Hermes box:
+
+```bash
+eval "$(python3 scripts/hermes-secrets-to-env.py)"
+export OPENAI_API_KEY=...
+TRACKHOUND_DATABASE_URL=sqlite://./trackhound.sqlite cargo run -- serve
+```
 
 ## API
 

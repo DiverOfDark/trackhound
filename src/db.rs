@@ -1,12 +1,17 @@
 use crate::{models::*, status::ShipmentStatus};
 use anyhow::Context;
-use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
+use sqlx::{
+    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
+    SqlitePool,
+};
+use std::str::FromStr;
 use uuid::Uuid;
 
 pub async fn connect(database_url: &str) -> anyhow::Result<SqlitePool> {
+    let options = SqliteConnectOptions::from_str(database_url)?.create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
-        .connect(database_url)
+        .connect_with(options)
         .await?;
     sqlx::query("PRAGMA foreign_keys = ON")
         .execute(&pool)
