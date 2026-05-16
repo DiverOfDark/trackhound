@@ -44,6 +44,12 @@ secrets:
   gmailRefreshToken: ""
   track17SecurityKey: ""
 
+# Additional Kubernetes manifests to render with this release. Useful for
+# ExternalSecret, SecretStore, NetworkPolicy, ServiceMonitor, etc.
+# Entries are evaluated with Helm's tpl, so values like
+# {{ include "trackhound.fullname" . }} can be used inside them.
+additionalObjects: []
+
 resources: {}
 nodeSelector: {}
 tolerations: []
