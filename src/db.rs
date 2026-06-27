@@ -44,6 +44,23 @@ pub async fn record_email_seen(
     Ok(())
 }
 
+/// Lifecycle precedence used to keep email-driven status updates monotonic: a
+/// late or out-of-order email (e.g. a "dispatched" notice arriving after
+/// "delivered") must never regress a row to an earlier state. `failed` and
+/// `delivered` rank highest as terminal states; `unknown` lowest so it never
+/// clobbers a known status. 17TRACK remains authoritative via its own
+/// unguarded update path.
+const STATUS_ORDER: &str =
+    ",unknown,detected,registered,in_transit,out_for_delivery,failed,delivered,";
+
+/// SQL expression that yields `incoming`'s status if it ranks at least as high
+/// as `existing`'s in [`STATUS_ORDER`], otherwise keeps `existing`.
+fn monotonic_status(existing: &str, incoming: &str) -> String {
+    format!(
+        "CASE WHEN INSTR('{STATUS_ORDER}', ',' || {incoming} || ',') >= INSTR('{STATUS_ORDER}', ',' || {existing} || ',') THEN {incoming} ELSE {existing} END"
+    )
+}
+
 pub async fn upsert_order(
     pool: &SqlitePool,
     msg: &EmailMessage,
@@ -65,18 +82,30 @@ pub async fn upsert_order(
         .map(ShipmentStatus::from_text)
         .unwrap_or(ShipmentStatus::Detected)
         .as_str();
-    sqlx::query(r#"INSERT INTO orders(id, source, order_number, merchant, status, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
+    let status_sql = monotonic_status("orders.status", "excluded.status");
+    let query = format!(
+        r#"INSERT INTO orders(id, source, order_number, merchant, status, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
                   VALUES (?, 'amazon', ?, ?, ?, ?, ?, ?, ?)
                   ON CONFLICT(source, order_number) DO UPDATE SET
                     merchant = COALESCE(excluded.merchant, orders.merchant),
-                    status = excluded.status,
+                    status = {status_sql},
                     last_email_message_id = excluded.last_email_message_id,
                     last_email_thread_id = excluded.last_email_thread_id,
                     last_email_subject = excluded.last_email_subject,
                     raw_last_event = excluded.raw_last_event,
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"#)
-        .bind(&id).bind(order_number).bind(&item.merchant).bind(status).bind(&msg.id)
-        .bind(&msg.thread_id).bind(&msg.subject).bind(&item.reason).execute(pool).await?;
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"#
+    );
+    sqlx::query(&query)
+        .bind(&id)
+        .bind(order_number)
+        .bind(&item.merchant)
+        .bind(status)
+        .bind(&msg.id)
+        .bind(&msg.thread_id)
+        .bind(&msg.subject)
+        .bind(&item.reason)
+        .execute(pool)
+        .await?;
     Ok(id)
 }
 
@@ -142,22 +171,34 @@ pub async fn upsert_amazon_placeholder(
         .unwrap_or(ShipmentStatus::Detected)
         .as_str();
     let id = Uuid::new_v4().to_string();
-    sqlx::query(r#"INSERT INTO shipments(id, tracking_number, order_id, source, title, status, expected_delivery_date, delivered_at, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
+    let status_sql = monotonic_status("shipments.status", "excluded.status");
+    let query = format!(
+        r#"INSERT INTO shipments(id, tracking_number, order_id, source, title, status, expected_delivery_date, delivered_at, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
                   VALUES (?, NULL, ?, 'amazon_placeholder', ?, ?, ?, CASE WHEN ? = 'delivered' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END, ?, ?, ?, ?)
                   ON CONFLICT(order_id) WHERE source = 'amazon_placeholder' DO UPDATE SET
                     title = COALESCE(excluded.title, shipments.title),
-                    status = excluded.status,
+                    status = {status_sql},
                     expected_delivery_date = COALESCE(excluded.expected_delivery_date, shipments.expected_delivery_date),
                     delivered_at = COALESCE(shipments.delivered_at, excluded.delivered_at),
                     last_email_message_id = excluded.last_email_message_id,
                     last_email_thread_id = excluded.last_email_thread_id,
                     last_email_subject = excluded.last_email_subject,
                     raw_last_event = COALESCE(excluded.raw_last_event, shipments.raw_last_event),
-                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"#)
-        .bind(&id).bind(order_id).bind(&item.title).bind(status)
-        .bind(&item.expected_delivery_date).bind(status)
-        .bind(&msg.id).bind(&msg.thread_id).bind(&msg.subject).bind(&item.reason)
-        .execute(pool).await?;
+                    updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"#
+    );
+    sqlx::query(&query)
+        .bind(&id)
+        .bind(order_id)
+        .bind(&item.title)
+        .bind(status)
+        .bind(&item.expected_delivery_date)
+        .bind(status)
+        .bind(&msg.id)
+        .bind(&msg.thread_id)
+        .bind(&msg.subject)
+        .bind(&item.reason)
+        .execute(pool)
+        .await?;
     let row: (String,) = sqlx::query_as(
         "SELECT id FROM shipments WHERE order_id = ? AND source = 'amazon_placeholder'",
     )
@@ -472,5 +513,61 @@ mod tests {
         assert!(order_numbers.contains(&"111-1111111-1111111".to_string()));
         assert!(order_numbers.contains(&"222-2222222-2222222".to_string()));
         assert!(!order_numbers.contains(&"333-3333333-3333333".to_string()));
+    }
+
+    #[tokio::test]
+    async fn placeholder_and_order_status_never_regress() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let msg = EmailMessage {
+            id: "m1".into(),
+            thread_id: "t1".into(),
+            subject: "Amazon".into(),
+            from_addr: "auto-confirm@amazon.com".into(),
+            snippet: "".into(),
+            body_text: "".into(),
+            internal_date_ms: 1,
+        };
+        let mut item = ExtractedShipment {
+            kind: ExtractedKind::AmazonOrder,
+            tracking_number: None,
+            order_number: Some("123-1234567-1234567".into()),
+            carrier: None,
+            merchant: Some("Amazon".into()),
+            status: Some("delivered".into()),
+            expected_delivery_date: None,
+            title: Some("Book".into()),
+            confidence: 0.9,
+            reason: None,
+        };
+        let order_id = upsert_order(&pool, &msg, &item).await.unwrap();
+        upsert_amazon_placeholder(&pool, &msg, &item, &order_id)
+            .await
+            .unwrap();
+
+        // A later-processed but older "dispatched" email must not regress status.
+        item.status = Some("detected".into());
+        upsert_order(&pool, &msg, &item).await.unwrap();
+        upsert_amazon_placeholder(&pool, &msg, &item, &order_id)
+            .await
+            .unwrap();
+
+        let order_status: (String,) = sqlx::query_as("SELECT status FROM orders WHERE id = ?")
+            .bind(&order_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        let shipment_status: (String,) = sqlx::query_as(
+            "SELECT status FROM shipments WHERE order_id = ? AND source = 'amazon_placeholder'",
+        )
+        .bind(&order_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(order_status.0, "delivered", "order status must not regress");
+        assert_eq!(
+            shipment_status.0, "delivered",
+            "placeholder status must not regress"
+        );
     }
 }

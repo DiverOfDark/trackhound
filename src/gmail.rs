@@ -28,13 +28,14 @@ impl GmailClient {
             let uids = session.uid_search(criteria)?;
             let total = uids.len();
             let mut uids: Vec<u32> = uids.into_iter().collect();
+            // Keep the newest `max_results` UIDs (highest first), then hand them
+            // back oldest-first so the scanner processes each order/thread in
+            // chronological order: the newest email wins on status and the
+            // last_email_* fields, instead of an older email overwriting them.
             uids.sort_unstable_by(|a, b| b.cmp(a));
-            let max_results = max_results as usize;
-            let ids: Vec<String> = uids
-                .into_iter()
-                .take(max_results)
-                .map(|uid| format!("imap:{uid}"))
-                .collect();
+            uids.truncate(max_results as usize);
+            uids.sort_unstable();
+            let ids: Vec<String> = uids.into_iter().map(|uid| format!("imap:{uid}")).collect();
             debug!(
                 matched = total,
                 returned = ids.len(),
