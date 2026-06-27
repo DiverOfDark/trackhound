@@ -142,17 +142,20 @@ pub async fn upsert_amazon_placeholder(
         .unwrap_or(ShipmentStatus::Detected)
         .as_str();
     let id = Uuid::new_v4().to_string();
-    sqlx::query(r#"INSERT INTO shipments(id, tracking_number, order_id, source, title, status, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
-                  VALUES (?, NULL, ?, 'amazon_placeholder', ?, ?, ?, ?, ?, ?)
+    sqlx::query(r#"INSERT INTO shipments(id, tracking_number, order_id, source, title, status, expected_delivery_date, delivered_at, last_email_message_id, last_email_thread_id, last_email_subject, raw_last_event)
+                  VALUES (?, NULL, ?, 'amazon_placeholder', ?, ?, ?, CASE WHEN ? = 'delivered' THEN strftime('%Y-%m-%dT%H:%M:%fZ','now') ELSE NULL END, ?, ?, ?, ?)
                   ON CONFLICT(order_id) WHERE source = 'amazon_placeholder' DO UPDATE SET
                     title = COALESCE(excluded.title, shipments.title),
                     status = excluded.status,
+                    expected_delivery_date = COALESCE(excluded.expected_delivery_date, shipments.expected_delivery_date),
+                    delivered_at = COALESCE(shipments.delivered_at, excluded.delivered_at),
                     last_email_message_id = excluded.last_email_message_id,
                     last_email_thread_id = excluded.last_email_thread_id,
                     last_email_subject = excluded.last_email_subject,
                     raw_last_event = COALESCE(excluded.raw_last_event, shipments.raw_last_event),
                     updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')"#)
         .bind(&id).bind(order_id).bind(&item.title).bind(status)
+        .bind(&item.expected_delivery_date).bind(status)
         .bind(&msg.id).bind(&msg.thread_id).bind(&msg.subject).bind(&item.reason)
         .execute(pool).await?;
     let row: (String,) = sqlx::query_as(
@@ -225,8 +228,11 @@ pub async fn shipment_by_id(pool: &SqlitePool, id: &str) -> anyhow::Result<Optio
 
 pub async fn due_today(pool: &SqlitePool, today: &str) -> anyhow::Result<Vec<ShipmentRow>> {
     sqlx::query_as::<_, ShipmentRow>(r#"SELECT s.*, o.order_number, o.merchant FROM shipments s LEFT JOIN orders o ON o.id = s.order_id
-        WHERE s.status = 'out_for_delivery' OR s.expected_delivery_date = ? ORDER BY s.updated_at DESC"#)
-        .bind(today).fetch_all(pool).await.map_err(Into::into)
+        WHERE s.status = 'out_for_delivery'
+           OR s.expected_delivery_date = ?
+           OR date(s.delivered_at) = ?
+        ORDER BY s.updated_at DESC"#)
+        .bind(today).bind(today).fetch_all(pool).await.map_err(Into::into)
 }
 
 pub async fn tracking_numbers_for_sync(pool: &SqlitePool) -> anyhow::Result<Vec<String>> {
@@ -390,5 +396,81 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count.0, 1, "only the real tracking shipment should remain");
+    }
+
+    #[tokio::test]
+    async fn due_today_surfaces_amazon_placeholders_arriving_or_delivered_today() {
+        let pool = connect("sqlite::memory:").await.unwrap();
+        migrate(&pool).await.unwrap();
+        let today = crate::models::today_utc_date();
+        let msg = EmailMessage {
+            id: "m1".into(),
+            thread_id: "t1".into(),
+            subject: "Arriving today".into(),
+            from_addr: "auto-confirm@amazon.com".into(),
+            snippet: "".into(),
+            body_text: "".into(),
+            internal_date_ms: 1,
+        };
+
+        // Order whose placeholder is expected to arrive today.
+        let arriving = ExtractedShipment {
+            kind: ExtractedKind::AmazonOrder,
+            tracking_number: None,
+            order_number: Some("111-1111111-1111111".into()),
+            carrier: None,
+            merchant: Some("Amazon".into()),
+            status: Some("detected".into()),
+            expected_delivery_date: Some(today.clone()),
+            title: Some("Arriving today".into()),
+            confidence: 0.9,
+            reason: None,
+        };
+        let arriving_order = upsert_order(&pool, &msg, &arriving).await.unwrap();
+        upsert_amazon_placeholder(&pool, &msg, &arriving, &arriving_order)
+            .await
+            .unwrap();
+
+        // Order whose placeholder was delivered today (no expected date set).
+        let delivered = ExtractedShipment {
+            kind: ExtractedKind::AmazonOrder,
+            tracking_number: None,
+            order_number: Some("222-2222222-2222222".into()),
+            carrier: None,
+            merchant: Some("Amazon".into()),
+            status: Some("delivered".into()),
+            expected_delivery_date: None,
+            title: Some("Delivered today".into()),
+            confidence: 0.9,
+            reason: None,
+        };
+        let delivered_order = upsert_order(&pool, &msg, &delivered).await.unwrap();
+        upsert_amazon_placeholder(&pool, &msg, &delivered, &delivered_order)
+            .await
+            .unwrap();
+
+        // Order that is neither expected nor delivered today must not appear.
+        let other = ExtractedShipment {
+            kind: ExtractedKind::AmazonOrder,
+            tracking_number: None,
+            order_number: Some("333-3333333-3333333".into()),
+            carrier: None,
+            merchant: Some("Amazon".into()),
+            status: Some("detected".into()),
+            expected_delivery_date: None,
+            title: Some("Just dispatched".into()),
+            confidence: 0.9,
+            reason: None,
+        };
+        let other_order = upsert_order(&pool, &msg, &other).await.unwrap();
+        upsert_amazon_placeholder(&pool, &msg, &other, &other_order)
+            .await
+            .unwrap();
+
+        let rows = due_today(&pool, &today).await.unwrap();
+        let order_numbers: Vec<_> = rows.iter().filter_map(|r| r.order_number.clone()).collect();
+        assert!(order_numbers.contains(&"111-1111111-1111111".to_string()));
+        assert!(order_numbers.contains(&"222-2222222-2222222".to_string()));
+        assert!(!order_numbers.contains(&"333-3333333-3333333".to_string()));
     }
 }

@@ -23,9 +23,13 @@ impl OpenAiClassifier {
     }
 
     pub async fn classify(&self, msg: &EmailMessage) -> anyhow::Result<ExtractionResult> {
+        let email_date = chrono::DateTime::from_timestamp_millis(msg.internal_date_ms)
+            .map(|dt| dt.format("%Y-%m-%d").to_string())
+            .unwrap_or_default();
         let content = format!(
-            "From: {}\nSubject: {}\nSnippet: {}\nBody:\n{}",
+            "From: {}\nEmail date: {}\nSubject: {}\nSnippet: {}\nBody:\n{}",
             msg.from_addr,
+            email_date,
             msg.subject,
             msg.snippet,
             truncate(&msg.body_text, 12000)
@@ -89,6 +93,8 @@ Rules:
 - Amazon emails often have only order numbers; output kind amazon_order with order_number only.
 - If an Amazon order later has multiple tracking numbers, output each tracking number as its own tracking item with the same order_number.
 - Status text should be simple: detected, registered, in_transit, out_for_delivery, delivered, failed, unknown.
+- Always set status from the email: a "Delivered" / "zugestellt" notification is delivered; "out for delivery" / "arriving today" is out_for_delivery.
+- Set expected_delivery_date (YYYY-MM-DD) whenever the email states or implies a delivery/arrival date, including for amazon_order items. Resolve relative phrases ("today", "tomorrow", "arriving Monday", "delivered today") against the provided "Email date". For a delivery confirmation, use the stated delivery date, otherwise the Email date.
 - If unsure, output kind ignore or low confidence.
 "#;
 
