@@ -4,6 +4,10 @@ metadata:
   name: {{ include "trackhound.fullname" . }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  # SQLite lives on a ReadWriteOnce PVC, so the old pod must release the volume
+  # before the new one can mount it. RollingUpdate deadlocks on Multi-Attach.
+  strategy:
+    type: {{ .Values.updateStrategy | default "Recreate" }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "trackhound.name" . }}

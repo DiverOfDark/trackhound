@@ -1,5 +1,10 @@
 replicaCount: 1
 
+# Deployment update strategy. Must be Recreate while the SQLite database lives
+# on a ReadWriteOnce PVC: a RollingUpdate would deadlock because the new pod
+# cannot mount the volume until the old pod releases it (Multi-Attach error).
+updateStrategy: Recreate
+
 image:
   repository: ghcr.io/diverofdark/trackhound
   tag: latest
