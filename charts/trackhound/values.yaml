@@ -57,6 +57,9 @@ secrets:
 # {{ include "trackhound.fullname" . }} can be used inside them.
 additionalObjects: []
 
+# Extra annotations on the pod template (e.g. gitimage.dev/image.trackhound: trackhound).
+podAnnotations: {}
+
 resources: {}
 nodeSelector: {}
 tolerations: []
